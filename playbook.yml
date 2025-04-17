@@ -4,6 +4,7 @@
   become: yes
   vars:
     ansible_ssh_private_key_file: ./private_key
+
   tasks:
     - name: Ensure Docker is installed
       apt:
@@ -11,25 +12,47 @@
         state: present
         update_cache: yes
 
-    - name: Pull MySQL Docker image
+    - name: Pull Galera Docker image
       docker_image:
-        name: mysql:5.7
+        name: mariadb:10.5
         source: pull
 
-    - name: Create MySQL container
+    - name: Create Galera cluster
       docker_container:
-        name: mysql_db
-        image: mysql:5.7
+        name: galera_node_{{ item }}
+        image: mariadb:10.5
         env:
           MYSQL_ROOT_PASSWORD: "rootpass"
           MYSQL_DATABASE: "wordpress"
           MYSQL_USER: "wordpress"
           MYSQL_PASSWORD: "wordpresspass"
+          GALERA_CLUSTER_ADDRESS: "gcomm://galera_node_1,galera_node_2,galera_node_3"
+          GALERA_NODE_ADDRESS: "galera_node_{{ item }}"
         ports:
-          - "3306:3306"
+          - "330{{ item }}:3306"
         volumes:
-          - mysql_data:/var/lib/mysql
+          - galera_data:/var/lib/mysql
         state: started
+      loop:
+        - 1
+        - 2
+        - 3
+
+    - name: Configure Galera cluster
+      docker_container:
+        name: galera_node_1
+        image: mariadb:10.5
+        command: "galera_new_cluster"
+        state: running
+
+    - name: Wait for Galera cluster to be ready
+      uri:
+        url: "http://galera_node_1:3306"
+        status: 200
+      register: galera_status
+      until: galera_status.status == 200
+      retries: 10
+      delay: 5
 
     - name: Pull WordPress Docker image
       docker_image:
@@ -41,20 +64,24 @@
         name: wordpress_app
         image: wordpress:latest
         env:
-          WORDPRESS_DB_HOST: "mysql_db:3306"
+          WORDPRESS_DB_HOST: "galera_node_1:3306"
           WORDPRESS_DB_USER: "wordpress"
           WORDPRESS_DB_PASSWORD: "wordpresspass"
           WORDPRESS_DB_NAME: "wordpress"
         ports:
           - "8080:80"
-        links:
-          - mysql_db
+        depends_on:
+          - galera_node_1
+          - galera_node_2
+          - galera_node_3
         state: started
 
     - name: Ensure containers are running
       docker_container_info:
         name: "{{ item }}"
       loop:
-        - mysql_db
+        - galera_node_1
+        - galera_node_2
+        - galera_node_3
         - wordpress_app
       register: container_info
