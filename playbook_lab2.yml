@@ -13,7 +13,7 @@
         update_cache: yes
 
     - name: Pull Galera Docker image
-      docker_image:
+      community.docker.docker_image:
         name: mariadb:10.5
         source: pull
 
@@ -55,7 +55,7 @@
       delay: 5
 
     - name: Pull WordPress Docker image
-      docker_image:
+      community.docker.docker_image:
         name: wordpress:latest
         source: pull
 

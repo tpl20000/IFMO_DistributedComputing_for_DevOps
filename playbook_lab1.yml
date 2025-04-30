@@ -12,7 +12,7 @@
         update_cache: yes
 
     - name: Pull MySQL Docker image
-      docker_image:
+      community.docker.docker_image:
         name: mysql:5.7
         source: pull
 
@@ -32,7 +32,7 @@
         state: started
 
     - name: Pull WordPress Docker image
-      docker_image:
+      community.docker.docker_image:
         name: wordpress:latest
         source: pull
 
