@@ -1,0 +1,126 @@
+---
+- name: Deploy WordPress with Docker on MySQL DB
+  hosts: all
+  become: yes
+  vars:
+    db_user: "wordpress"
+    db_password: "wordpress"
+    replication_user: "replication"
+    replication_password: "replication"
+    compose_local_file_path: "docker-compose.yml"
+    compose_remote_file_path: "/home/{{ ansible_ssh_user }}/wordpress/docker-compose.yml"
+    wordpress_dir: "/home/{{ ansible_ssh_user }}/wordpress"
+
+  tasks:
+    - name: Install Docker dependencies
+      apt:
+        name:
+          - curl
+          - python3-pymysql
+          - ca-certificates
+          - apt-transport-https
+          - software-properties-common
+
+    - name: Add Docker GPG-Key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable
+        state: present
+
+    - name: Install Docker and Docker Compose
+      apt:
+        name: 
+          - docker-compose-plugin
+          - docker-ce-cli
+          - docker-ce
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Create WordPress directory
+      file:
+        path: "{{ wordpress_dir }}"
+        state: directory
+
+    - name: Configure Docker Compose file
+      copy:
+        src: "{{ compose_local_file_path }}"
+        dest: "{{ compose_remote_file_path }}"
+        mode: 0644
+          
+    - name: Start MySQL services with Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ wordpress_dir }}"
+        services:
+          - db_master
+          - db_node
+      
+    - name: Wait for MySQL master to be ready
+      wait_for:
+        port: 3306
+        delay: 2
+        timeout: 30
+
+    - name: Wait for MySQL node to be ready
+      wait_for:
+        port: 3307
+        delay: 2
+        timeout: 30
+
+    - name: Configure MySQL master and start it
+      mysql_query:
+        login_port: 3306
+        login_user: "root"
+        login_password: "{{ db_password }}"
+        query:
+          - CREATE USER IF NOT EXISTS '{{ replication_user }}'@'%' IDENTIFIED BY '{{ replication_password }}';
+          - GRANT REPLICATION SLAVE ON *.* TO 'replication'@'%'
+          - FLUSH PRIVILEGES
+        single_transaction: true
+
+    - name: Get master replication data
+      mysql_info:
+        login_port: 3306
+        login_user: "root"
+        login_password: "{{ db_password }}"
+      register: mysql_master_status
+
+    - name: Configure replication on the node
+      mysql_replication:
+        login_user: "root"
+        login_password: "{{ db_password }}"
+        login_port: 3307
+        mode: changeprimary
+        master_host: db_master
+        master_user: "{{ replication_user }}"
+        master_password: "{{ replication_password }}"
+        master_log_file: "{{ mysql_master_status.master_status.File }}"
+        master_log_pos: "{{ mysql_master_status.master_status.Position }}"
+
+    - name: Start node
+      mysql_replication:
+        login_user: "root"
+        login_password: "{{ db_password }}"
+        login_port: 3307
+        mode: startreplica
+
+    - name: Start WordPress
+      community.docker.docker_compose_v2:
+        project_src: "{{ wordpress_dir }}"
+        services:
+          - wordpress
+
+    - name: Wait for WordPress to be accessible
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 60
