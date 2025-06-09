@@ -76,7 +76,7 @@
         delay: 2
         timeout: 30
 
-    - name: Configure MySQL master and start it
+    - name: Configure MySQL master
       mysql_query:
         login_port: 3306
         login_user: "root"
@@ -105,6 +105,14 @@
         master_password: "{{ replication_password }}"
         master_log_file: "{{ mysql_master_status.master_status.File }}"
         master_log_pos: "{{ mysql_master_status.master_status.Position }}"
+
+    - name: Configure MySQL node authentication
+      mysql_query:
+        login_port: 3307
+        login_user: "root"
+        login_password: "{{ db_password }}"
+        query:
+          - CHANGE REPLICATION SOURCE TO GET_SOURCE_PUBLIC_KEY=1
 
     - name: Start node
       mysql_replication:
